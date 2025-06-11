@@ -346,5 +346,34 @@ public class Gateway : IInstance
     {
         this.Stop();
     }
+
+    // ---------------------------------------------------------------------
+    // EEG extension: dynamic session management --------------------------------
+    // These methods allow adding or removing sessions at runtime without
+    // restarting the Gateway. They lock on SyncRoot to stay thread-safe.
+    // ---------------------------------------------------------------------
+    public bool TryAddSession(int sessionId, string proxyClientPassword, string proxyServerPassword)
+    {
+        lock (this.SyncRoot)
+        {
+            if (this.Sessions.ContainsKey(sessionId))
+                return false;
+
+            var dict = (Dictionary<int, Session>)this.Sessions;
+            dict[sessionId] = new Session(
+                Encoding.UTF8.GetBytes(proxyClientPassword),
+                Encoding.UTF8.GetBytes(proxyServerPassword));
+            return true;
+        }
+    }
+
+    public bool TryRemoveSession(int sessionId)
+    {
+        lock (this.SyncRoot)
+        {
+            var dict = (Dictionary<int, Session>)this.Sessions;
+            return dict.Remove(sessionId);
+        }
+    }
 }
 
