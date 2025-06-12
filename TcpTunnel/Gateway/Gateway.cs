@@ -375,5 +375,34 @@ public class Gateway : IInstance
             return dict.Remove(sessionId);
         }
     }
+
+    public bool ForceCloseSession(int sessionId)
+    {
+        lock (this.SyncRoot)
+        {
+            if (!this.Sessions.TryGetValue(sessionId, out var session))
+                return false;
+
+            // Abort all proxy connections
+            foreach (var kv in session.Proxies)
+            {
+                // Notify the proxy that the session is being closed by gateway (custom packet type 0x05)
+                try
+                {
+                    kv.Value.proxyConnection.SendMessageByQueue(new byte[] { 0x05 });
+                }
+                catch { }
+
+                try
+                {
+                    kv.Value.Abort();
+                }
+                catch { /* ignore individual errors */ }
+            }
+
+            this.Sessions.Remove(sessionId);
+            return true;
+        }
+    }
 }
 

@@ -422,6 +422,12 @@ public partial class Proxy : IInstance
                                 gatewayConnection,
                                 partnerProxyId ?? Constants.ProxyClientId);
                     }
+                    else if (packetBuffer.Length >=1 && packetBuffer.Span[0] == 0x05)
+                    {
+                        // Session was forcibly closed by the gateway
+                        this.logger?.Invoke("Session closed by gateway.");
+                        return; // exit loop -> will reconnect logic decide
+                    }
                     else if (TryDecodePartnerProxyMessage(
                         packetBuffer,
                         isProxyClient,

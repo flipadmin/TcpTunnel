@@ -376,4 +376,13 @@ internal class GatewayProxyConnectionHandler
 
         this.proxyConnection.SendMessageByQueue(response);
     }
+
+    internal void Abort()
+    {
+        try
+        {
+            this.proxyConnection.Cancel();
+        }
+        catch { /* ignore */ }
+    }
 }
