@@ -400,7 +400,9 @@ public class Gateway : IInstance
                 catch { /* ignore individual errors */ }
             }
 
-            this.Sessions.Remove(sessionId);
+            // Remove the session from the underlying dictionary
+            var dictSessions = (Dictionary<int, Session>)this.Sessions;
+            dictSessions.Remove(sessionId);
             return true;
         }
     }

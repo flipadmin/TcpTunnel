@@ -40,7 +40,7 @@ namespace TcpTunnel.Gateway;
 internal class GatewayProxyConnectionHandler
 {
     private readonly Gateway gateway;
-    private readonly TcpFramingConnection proxyConnection;
+    internal readonly TcpFramingConnection proxyConnection;
     private readonly EndPoint remoteEndpoint;
 
     private ulong proxyId;
