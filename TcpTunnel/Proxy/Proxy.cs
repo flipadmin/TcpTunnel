@@ -80,6 +80,23 @@ public partial class Proxy : IInstance
         Dictionary<ulong /* connectionId */, ProxyTunnelConnection<TunnelConnectionData>>> activePartnerProxiesAndConnections =
         [];
 
+    private volatile bool _sessionClosedByGateway = false;
+    private volatile bool _maxAttemptsExceeded = false;
+    private readonly int _maxReconnectAttempts;
+    private int _currentReconnectAttempts = 0;
+    private int _authFailures = 0;
+
+    private ProxyState _state = ProxyState.Disconnected;
+    public event EventHandler<ProxyState>? StateChanged;
+
+    private void SetState(ProxyState newState)
+    {
+        if (_state == newState) return;
+        _state = newState;
+        try { StateChanged?.Invoke(this, newState); } catch { }
+        this.logger?.Invoke($"[State] {_state}");
+    }
+
     public Proxy(
         string gatewayHost,
         int gatewayPort,
@@ -88,7 +105,8 @@ public partial class Proxy : IInstance
         ReadOnlyMemory<byte> sessionPasswordBytes,
         IReadOnlyList<ProxyServerConnectionDescriptor>? proxyServerConnectionDescriptors,
         IReadOnlyList<(string host, int port)>? proxyClientAllowedTargetEndpoints,
-        Action<string>? logger = null)
+        Action<string>? logger = null,
+        int maxReconnectAttempts = 0)
     {
         this.gatewayHost = gatewayHost;
         this.gatewayPort = gatewayPort;
@@ -98,6 +116,7 @@ public partial class Proxy : IInstance
         this.proxyServerConnectionDescriptors = proxyServerConnectionDescriptors;
         this.proxyClientAllowedTargetEndpoints = proxyClientAllowedTargetEndpoints;
         this.logger = logger;
+        _maxReconnectAttempts = maxReconnectAttempts;
     }
 
     private static (byte[] messageToSend, Memory<byte> coreMessage) PreparePartnerProxyMessage(
@@ -161,6 +180,8 @@ public partial class Proxy : IInstance
 
         this.readTaskCts = new CancellationTokenSource();
         this.readTask = ExceptionUtils.StartTask(() => this.RunReadTaskAsync(this.readTaskCts.Token));
+
+        SetState(ProxyState.Connecting);
     }
 
     public void Stop()
@@ -176,6 +197,8 @@ public partial class Proxy : IInstance
 
         this.readTask.GetAwaiter().GetResult();
         this.readTaskCts!.Dispose();
+
+        SetState(ProxyState.Disconnected);
     }
 
     private async Task RunReadTaskAsync(CancellationToken readTaskCancellationToken)
@@ -268,6 +291,8 @@ public partial class Proxy : IInstance
                                     $"({(this.proxyServerConnectionDescriptors is not null ? "proxy-server" : "proxy-client")})...");
                             }
 
+                            _currentReconnectAttempts = 0;
+
                             return modifiedStream;
                         });
 
@@ -295,16 +320,34 @@ public partial class Proxy : IInstance
                     }
                 }
 
+                // Count this attempt if we never reached an authenticated Connected state
+                if (!_sessionClosedByGateway)
+                    _currentReconnectAttempts++;
+
                 // Log the error if we lost connection, or if we couldn't connect and this
                 // is a new error.
                 string newConnectionError = caughtException?.Message ?? "Peer closed connection.";
 
-                if (wasConnected)
+                if (wasConnected && !_sessionClosedByGateway)
                     this.logger?.Invoke($"Connection to gateway lost ({newConnectionError}). Reconnecting...");
                 else if (newConnectionError != lastConnectionError)
                     this.logger?.Invoke($"Unable to connect to gateway ({newConnectionError}). Trying again...");
 
                 lastConnectionError = newConnectionError;
+
+                if (_sessionClosedByGateway)
+                {
+                    this.logger?.Invoke("Session closed by gateway - stopping reconnection attempts");
+                    break;
+                }
+                
+                if (_maxAttemptsExceeded || Exceeded())
+                {
+                    this.logger?.Invoke($"Maximum reconnection attempts exceeded ({_maxReconnectAttempts}) - stopping");
+                    _maxAttemptsExceeded = true;
+                    SetState(ProxyState.Failed);
+                    break;
+                }
 
                 // Wait a bit.
                 await Task.Delay(2000, readTaskCancellationToken);
@@ -390,6 +433,24 @@ public partial class Proxy : IInstance
                         this.logger?.Invoke(
                             $"Authentication: " +
                             $"{(authenticationSucceeded ? "Succeeded" : "Failed")}.");
+
+                        if (authenticationSucceeded)
+                        {
+                            SetState(ProxyState.Connected);
+                            _authFailures = 0;
+                        }
+                        else
+                        {
+                            SetState(ProxyState.Failed);
+                            _authFailures++;
+                            if (Exceeded())
+                            {
+                                this.logger?.Invoke($"Max attempts reached after auth failures");
+                                _maxAttemptsExceeded = true;
+                                SetState(ProxyState.Failed);
+                                return; // Exit the entire connection loop
+                            }
+                        }
                     }
                     else if (packetBuffer.Length >= 2 + (isProxyClient ? sizeof(ulong) : 0) &&
                         packetBuffer.Span[0] is 0x02)
@@ -426,7 +487,9 @@ public partial class Proxy : IInstance
                     {
                         // Session was forcibly closed by the gateway
                         this.logger?.Invoke("Session closed by gateway.");
-                        return; // exit loop -> will reconnect logic decide
+                        _sessionClosedByGateway = true;
+                        SetState(ProxyState.ClosedByGateway);
+                        return; // exit loop
                     }
                     else if (TryDecodePartnerProxyMessage(
                         packetBuffer,
@@ -921,5 +984,10 @@ public partial class Proxy : IInstance
                 connectionId,
                 socket);
         }
+    }
+
+    private bool Exceeded()
+    {
+        return _maxReconnectAttempts > 0 && (_currentReconnectAttempts + _authFailures) >= _maxReconnectAttempts;
     }
 }
