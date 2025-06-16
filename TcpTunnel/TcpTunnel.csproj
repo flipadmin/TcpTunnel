@@ -2,8 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <RollForward>Major</RollForward>
-    <OutputType>Exe</OutputType>
+    <OutputType>Library</OutputType>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
