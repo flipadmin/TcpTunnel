@@ -7,5 +7,6 @@ public enum ProxyState
     Connected,
     Reconnecting,
     ClosedByGateway,
-    Failed
+    Failed,
+    FailedAuth
 } 

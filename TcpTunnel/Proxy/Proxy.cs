@@ -441,15 +441,10 @@ public partial class Proxy : IInstance
                         }
                         else
                         {
-                            SetState(ProxyState.Failed);
-                            _authFailures++;
-                            if (Exceeded())
-                            {
-                                this.logger?.Invoke($"Max attempts reached after auth failures");
-                                _maxAttemptsExceeded = true;
-                                SetState(ProxyState.Failed);
-                                return; // Exit the entire connection loop
-                            }
+                            SetState(ProxyState.FailedAuth);
+                            // Authentication failure is terminal — no automatic retries.
+                            _maxAttemptsExceeded = true;
+                            return;
                         }
                     }
                     else if (packetBuffer.Length >= 2 + (isProxyClient ? sizeof(ulong) : 0) &&
